@@ -98,9 +98,9 @@ class LocalMeural:
         self.device = device
         self.session = session
 
-    async def request(self, method, path, data=None) -> Dict:
+    async def request(self, method, path, data=None, **kwargs) -> Dict:
         url = f"http://{self.ip}/remote/{path}"
-        kwargs = {}
+        if not kwargs: kwargs = {}
         if data:
             if method == "get":
                 kwargs["query"] = data
@@ -181,6 +181,7 @@ class LocalMeural:
         # FIXME: meural accepts image/jpeg but not image/jpg
         if content_type == 'image/jpg':
             content_type = 'image/jpeg'
+        filename = url.split('/')[-1]
 
         _LOGGER.info('meural %s: sending postcard %s' % (
             self.device['alias'], url))
@@ -190,10 +191,27 @@ class LocalMeural:
         _LOGGER.info('meural %s: downloaded %d bytes of image' % (
             self.device['alias'], len(image)))
 
-        data = aiohttp.FormData()
-        data.add_field('photo', image, content_type=content_type)
-        response = await self.session.post(f"http://{self.ip}/remote/postcard",
-            data=data)
+        # FIXME: a clumsy way around aiohttp adding Content-Length to form
+        # data, which upsets meural
+        # See https://github.com/aio-libs/aiohttp/issues/4782
+        boundary = 'd3ee6f4816d242648ed49ad7aa84a768'
+        header = '''--%s
+Content-Disposition: form-data; name="photo"; filename="%s"
+Content-Type: %s
+
+''' % (boundary, filename, content_type)
+        footer = '\n--%s' % boundary
+
+        body = bytes(header, 'utf-8') + image + bytes(footer, 'utf-8')
+
+        headers = {}
+        headers['Content-Length'] = str(len(body))
+        headers['Content-Type'] = 'multipart/form-data; boundary=' + boundary
+
+        response = await self.session.request('post', f"http://{self.ip}/remote/postcard",
+        #response = await self.session.request('post', f"http://localhost:8000/remote/postcard",
+           data=body,
+            headers=headers)
         _LOGGER.info(response)
         text = await response.text()
 
